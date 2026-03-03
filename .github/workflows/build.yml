@@ -1,24 +1,46 @@
-name: Fast Arch Builder
+name: BlackArch Pi Builder
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Your Repo
         uses: actions/checkout@v4
 
-      - name: Install Tools
-        run: sudo apt-get update && sudo apt-get install -y bsdtar wget
-
-      - name: Build Image
+      - name: Install Tools & Fetch Builder
         run: |
-          # Use the script you already have in the repo
-          chmod +x ./archlinux-arm-img/build-arch-arm-img.sh
-          sudo ./archlinux-arm-img/build-arch-arm-img.sh ArchLinuxARM-rpi-aarch64-latest.tar.gz
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools wget parted dosfstools fdisk
+          git clone https://github.com builder
 
-      - name: Upload Result
+      - name: Build and Inject Custom Files
+        run: |
+          cd builder
+          chmod +x build-arch-arm-img.sh
+          
+          # 1. Start the standard build
+          sudo ./build-arch-arm-img.sh ArchLinuxARM-rpi-aarch64-latest.tar.gz
+          
+          # 2. Find the newly created .img file
+          IMG_FILE=$(ls images/*.img)
+          echo "Found image: $IMG_FILE"
+
+          # 3. Use the builder's loop setup to inject your blackarch files
+          # We mount the 2nd partition (root) to /mnt
+          LOOP_DEV=$(sudo losetup --find --show --partscan "$IMG_FILE")
+          sudo mount "${LOOP_DEV}p2" /mnt
+          
+          # 4. Copy your local files into the image root
+          echo "Injecting BlackArch files..."
+          sudo cp -r ../blackarch/* /mnt/
+          
+          # 5. Clean up
+          sudo umount /mnt
+          sudo losetup -d "$LOOP_DEV"
+
+      - name: Upload Finished Image
         uses: actions/upload-artifact@v4
         with:
-          name: arch-rpi-image
-          path: archlinux-arm-img/images/*.img
+          name: blackarch-pi-ready
+          path: builder/images/*.img

@@ -1,10 +1,21 @@
-name: Pure Self-Contained Builder
+name: High-Capacity Pi Builder
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Maximize Disk Space
+        # This reclaims ~30GB by removing unnecessary tools
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+
       - name: Checkout Your Repo
         uses: actions/checkout@v4
 
@@ -15,11 +26,12 @@ jobs:
 
       - name: Create Image and Inject
         run: |
-          # 1. Create a 4GB blank image
-          fallocate -l 4G alarm.img
+          # 1. Create a 6GB image (larger to accommodate BlackArch + growth)
+          fallocate -l 6G alarm.img
 
-          # 2. Partition the image (200MB FAT32 Boot, Remainder EXT4 Root)
-          # We use a heredoc to feed commands to fdisk
+          # 2. Partition (Heredoc for non-interactive fdisk)
+          # n(new), p(primary), 1(num), default(start), +200M(size), t(type), c(W95 FAT32 LBA)
+          # n(new), p(primary), 2(num), default(start), default(end)
           sudo fdisk alarm.img <<EOF
           o
           n
@@ -40,32 +52,31 @@ jobs:
           # 3. Setup Loop Device
           LOOP_DEV=$(sudo losetup --find --show --partscan alarm.img)
           
-          # 4. Format partitions
+          # 4. Format
           sudo mkfs.vfat -F 32 -n BOOT "${LOOP_DEV}p1"
           sudo mkfs.ext4 -F -L ROOT "${LOOP_DEV}p2"
 
-          # 5. Mount and Download Arch ARM
+          # 5. Mount
           sudo mkdir -p /mnt/root
           sudo mount "${LOOP_DEV}p2" /mnt/root
           sudo mkdir -p /mnt/root/boot
           sudo mount "${LOOP_DEV}p1" /mnt/root/boot
 
-          echo "Downloading Arch Linux ARM..."
-          wget -q http://os.archlinuxarm.org/os/ArchLinuxARM-rpi-aarch64-latest.tar.gz
-          
-          echo "Extracting (this takes a minute)..."
+          # 6. Download and Extract
+          wget -q http://os.archlinuxarm.org
           sudo bsdtar -xpf ArchLinuxARM-rpi-aarch64-latest.tar.gz -C /mnt/root
           
-          # 6. Inject your BlackArch files
+          # 7. Inject BlackArch (Ensuring folder exists)
           if [ -d "blackarch" ]; then
-            echo "Injecting your BlackArch files..."
+            echo "Injecting BlackArch..."
             sudo cp -rp blackarch/. /mnt/root/
           fi
 
-          # 7. Cleanup
+          # 8. Cleanup
           sync
           sudo umount -R /mnt/root
           sudo losetup -d "$LOOP_DEV"
+          rm ArchLinuxARM-rpi-aarch64-latest.tar.gz
 
       - name: Upload Finished Image
         uses: actions/upload-artifact@v4
